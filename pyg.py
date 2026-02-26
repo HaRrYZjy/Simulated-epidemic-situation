@@ -18,6 +18,7 @@ blackSquare = 3
 wall = 4
 doctor = 5
 Vaccinated = 6
+player = 7
 
 # ****************************************************Grid Directions*********************************
 UP = (0, -1)
@@ -47,6 +48,9 @@ GREEN = (0, 255, 0)
 RED = (255, 0, 0)
 Purple = (128, 0, 128)
 Yellow = (255, 255, 0)
+BLUE = (30, 144, 255)
+
+FONT = None
 
 
 ################################
@@ -107,6 +111,8 @@ def colourGrid(item, world):
         pygame.draw.rect(DISPLAYSURF, Yellow, (x, y, CELLSIZE, CELLSIZE))
     if state == Vaccinated:
         pygame.draw.rect(DISPLAYSURF, Purple, (x, y, CELLSIZE, CELLSIZE))
+    if state == player:
+        pygame.draw.rect(DISPLAYSURF, BLUE, (x, y, CELLSIZE, CELLSIZE))
     return None
 
 
@@ -189,6 +195,14 @@ def tick(world):
                 humancount += 1
                 newTick[item] = empty
                 newTick[returnRandomNMoveDirection(item, newTick)] = Vaccinated
+        elif world[item] == player:
+            # 玩家不会随机移动，但可能被感染
+            if getVectorNeighbours(item, world) > 3:
+                newTick[item] = vector
+                vectorcount += 1
+            else:
+                humancount += 1
+                newTick[item] = player
 
     if humancount == 0:
         print('vector is win !')
@@ -291,15 +305,49 @@ def isValidDirection(checkCell, nextWorld):
         return False
 
 
+def gridFromMouse(mousePos):
+    return (mousePos[0] // CELLSIZE, mousePos[1] // CELLSIZE)
+
+
+def drawHUD(selectedTool, actionPoints, paused):
+    status = '暂停' if paused else '运行'
+    tip = (
+        f'状态:{status} | 技能点:{actionPoints} | 当前工具:{selectedTool} | '
+        '移动:WASD/方向键 治疗:空格 工具:1医生 2疫苗 3墙 左键放置 P暂停 N单步'
+    )
+    textSurface = FONT.render(tip, True, BLACK)
+    DISPLAYSURF.blit(textSurface, (5, 5))
+
+
+def useHealSkill(world, playerPos):
+    # 将玩家周围感染者转化为有抗体者
+    for x in range(-1, 2):
+        for y in range(-1, 2):
+            checkCell = (playerPos[0] + x, playerPos[1] + y)
+            if isNotWall(checkCell) and world[checkCell] == vector:
+                world[checkCell] = Vaccinated
+
+
+def movePlayer(world, playerPos, direction):
+    target = move(playerPos, direction)
+    if target != playerPos and world[target] == empty:
+        world[playerPos] = empty
+        world[target] = player
+        return target
+    return playerPos
+
+
 # main function
 def main():
     #    Part 1 - setup the py game defaults.
 
     pygame.init()
     global DISPLAYSURF
+    global FONT
     FPSCLOCK = pygame.time.Clock()
     DISPLAYSURF = pygame.display.set_mode((WINDOWWIDTH, WINDOWHEIGHT))
     pygame.display.set_caption('Grid example')
+    FONT = pygame.font.SysFont('simhei', max(18, CELLSIZE))
 
     # background color
     DISPLAYSURF.fill(WHITE)
@@ -312,6 +360,15 @@ def main():
     world = placeRandomPerson(world, 0.02, vector)  # Assign random humans    ##NOTE THIS CHANGE HERE###
     world = placeRandomPerson(world, 0.075, wall)
     world = placeRandomPerson(world, 0.01, doctor)
+
+    # 玩家出生点
+    playerPos = (CELLWIDTH // 2, CELLHEIGHT // 2)
+    world[playerPos] = player
+
+    selectedTool = 'doctor'
+    actionPoints = 8
+    maxActionPoints = 12
+    paused = False
 
     #    Part 3 - Draw the grid and the contents of the grid and display it
     # Colours the cells in the grid at the start of each simulation all will be blank/White for this simulation
@@ -327,18 +384,64 @@ def main():
 
     while not done:
         # --- Main event loop
+        stepOneTick = False
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 done = True
+            elif event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_w, pygame.K_UP):
+                    playerPos = movePlayer(world, playerPos, UP)
+                elif event.key in (pygame.K_s, pygame.K_DOWN):
+                    playerPos = movePlayer(world, playerPos, DOWN)
+                elif event.key in (pygame.K_a, pygame.K_LEFT):
+                    playerPos = movePlayer(world, playerPos, LEFT)
+                elif event.key in (pygame.K_d, pygame.K_RIGHT):
+                    playerPos = movePlayer(world, playerPos, RIGHT)
+                elif event.key == pygame.K_SPACE:
+                    useHealSkill(world, playerPos)
+                elif event.key == pygame.K_1:
+                    selectedTool = 'doctor'
+                elif event.key == pygame.K_2:
+                    selectedTool = 'vaccinated'
+                elif event.key == pygame.K_3:
+                    selectedTool = 'wall'
+                elif event.key == pygame.K_p:
+                    paused = not paused
+                elif event.key == pygame.K_n and paused:
+                    stepOneTick = True
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if actionPoints > 0:
+                    clickCell = gridFromMouse(event.pos)
+                    if isNotWall(clickCell) and world[clickCell] == empty:
+                        if selectedTool == 'doctor':
+                            world[clickCell] = doctor
+                        elif selectedTool == 'vaccinated':
+                            world[clickCell] = Vaccinated
+                        elif selectedTool == 'wall':
+                            world[clickCell] = wall
+                        actionPoints -= 1
 
                 # Part 4.1 Update the dictionary that describes the world with any changes we want to make
-        world = tick(world)
+        if not paused or stepOneTick:
+            world = tick(world)
+            # 技能点缓慢恢复，鼓励持续交互
+            if actionPoints < maxActionPoints:
+                actionPoints += 1
+
+            # 玩家位置可能在tick中被感染改变
+            if world.get(playerPos) != player:
+                for item in world:
+                    if world[item] == player:
+                        playerPos = item
+                        break
 
         # Part 4.2 Colour grid based on the updates we made to the dictionary
+        DISPLAYSURF.fill(WHITE)
         for item in world:
             colourGrid(item, world)
             # draw the grid on the display
         drawGrid()
+        drawHUD(selectedTool, actionPoints, paused)
 
         # Part 4.3 Show the new display on the screen
         pygame.display.update()
